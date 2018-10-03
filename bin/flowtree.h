@@ -1,4 +1,5 @@
 /*
+ *  Copyright (c) 2016, Peter Haag
  *  Copyright (c) 2014, Peter Haag
  *  Copyright (c) 2011, Peter Haag
  *  All rights reserved.
@@ -27,14 +28,25 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *  $Author$
- *
- *  $Id$
- *
- *  $LastChangedRevision$
- *  
  */
 
+#ifndef _FLOWTREE_H
+#define _FLOWTREE_H 1
+
+#ifdef HAVE_CONFIG_H 
+#include "config.h"
+#endif
+
+#include <sys/types.h>
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#endif
+#include <sys/time.h>
+
+#include <time.h>
+#include <signal.h>
+
+#include "collector.h"
 #include "rbtree.h"
 
 #define v4 ip_union._v4
@@ -82,20 +94,25 @@ struct FlowNode {
 	uint32_t	packets;	// summed up number of packets
 	uint32_t	bytes;		// summed up number of bytes
 
-	// flow payload
-#define DATABLOCKSIZE 256
-	uint32_t	DataSize;	// max size of data buffer
-	void		*data;		// start of data buffer
-//	uint32_t	eodata;		// offset last byte in buffer
-	
+	struct FlowNode *rev_node;
+	struct latency_s {
+		uint64_t    client;
+		uint64_t    server;
+		uint64_t    application;
+		uint32_t	flag;
+		struct timeval t_request;
+	} latency;
 };
 
 typedef struct NodeList_s {
 	struct FlowNode *list;
 	struct FlowNode *last;
+	sig_atomic_t	list_lock;
 	pthread_mutex_t m_list;
 	pthread_cond_t  c_list;
 	uint32_t length;
+	uint32_t waiting;
+	uint64_t waits;
 } NodeList_t;
 
 
@@ -125,6 +142,8 @@ struct FlowNode *Insert_Node(struct FlowNode *node);
 
 void Remove_Node(struct FlowNode *node);
 
+int Link_RevNode(struct FlowNode *node);
+
 // Node list functions 
 NodeList_t *NewNodeList(void);
 
@@ -136,14 +155,7 @@ struct FlowNode *Pop_Node(NodeList_t *NodeList, int *done);
 
 void DumpList(NodeList_t *NodeList);
 
-// Liked lists
-void AppendUDPNode(struct FlowNode *node);
-
-void TouchUDPNode(struct FlowNode *node);
-
-void UDPexpire(FlowSource_t *fs, time_t t_expire);
-
 // Stat functions
 void DumpNodeStat(void);
 
-
+#endif // _FLOWTREE_H

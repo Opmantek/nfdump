@@ -1,4 +1,5 @@
 /*
+ *  Copyright (c) 2017, Peter Haag
  *  Copyright (c) 2014, Peter Haag
  *  Copyright (c) 2009, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
@@ -28,12 +29,6 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *  $Author: haag $
- *
- *  $Id: netflow_v9.h 51 2010-01-29 09:01:54Z haag $
- *
- *  $LastChangedRevision: 51 $
- *	
  */
 
 /* v9 structures */
@@ -71,6 +66,17 @@
 
 #ifndef _NETFLOW_V9_H
 #define _NETFLOW_V9_H 1
+
+#include "config.h"
+
+#include <sys/types.h>
+#ifdef HAVE_STDINT_H
+#include <stdint.h>
+#endif
+
+#include "collector.h"
+#include "nfnet.h"
+#include "nffile.h"
 
 typedef struct netflow_v9_header {
 	uint16_t  version;
@@ -211,8 +217,12 @@ typedef struct common_header_s {
 #define NF9_ENGINE_ID			39
 
 #define NF9_FLOW_SAMPLER_ID 	48 
-#define FLOW_SAMPLER_MODE 	49 
+#define FLOW_SAMPLER_MODE 		49 
 #define NF9_FLOW_SAMPLER_RANDOM_INTERVAL 50
+
+#define NF_SELECTOR_ID			302
+#define NF_SELECTOR_ALGORITHM	304
+#define NF_SAMPLING_INTERVAL	305
 
 // #define NF9_MIN_TTL			52
 // #define NF9_MAX_TTL			53
@@ -279,6 +289,11 @@ typedef struct common_header_s {
 #define NF_F_XLATE_SRC_PORT_84      40003
 #define NF_F_XLATE_DST_PORT_84      40004
 #define NF_F_FW_EVENT_84            40005
+
+// ASA 9.x packet counters: initiatorPackets and responderPackets
+// see https://www.iana.org/assignments/ipfix/ipfix.xhtml
+#define NF_F_INITIATORPACKETS		298
+#define NF_F_RESPONDERPACKETS		299
 
 // Cisco ASR 1000 series NEL extension - Nat Event Logging
 #define NF_N_NAT_EVENT				230

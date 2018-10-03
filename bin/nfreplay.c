@@ -1,4 +1,5 @@
 /*
+ *  Copyright (c) 2018, 2017, 2016 Peter Haag
  *  Copyright (c) 2014, Peter Haag
  *  Copyright (c) 2009, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
@@ -28,12 +29,6 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *  $Author: haag $
- *
- *  $Id: nfreplay.c 39 2009-11-25 08:11:15Z haag $
- *
- *  $LastChangedRevision: 39 $
- *	
  */
 
 #include "config.h"
@@ -67,7 +62,6 @@
 #include "nfdump.h"
 #include "nfnet.h"
 #include "bookkeeper.h"
-#include "nfxstat.h"
 #include "collector.h"
 #include "exporter.h"
 #include "netflow_v5_v7.h"
@@ -114,7 +108,7 @@ static void usage(char *name);
 static void send_blast(unsigned int delay );
 
 static void send_data(char *rfile, time_t twin_start, time_t twin_end, uint32_t count, 
-				unsigned int delay,  int confirm, int netflow_version);
+				unsigned int delay,  int confirm, int netflow_version, int distribution);
 
 static int FlushBuffer(int confirm);
 
@@ -138,6 +132,8 @@ static void usage(char *name) {
 					"-b <bsize>\tSend buffer size.\n"
 					"-r <input>\tread from file. default: stdin\n"
 					"-f <filter>\tfilter syntaxfile\n"
+					"-v <version>\tUse netflow version to send flows. Either 5 or 9\n"
+					"-z <distribution>\tSimulate real time distribution with coefficient\n"
 					"-t <time>\ttime window for sending packets\n"
 					"\t\tyyyy/MM/dd.hh:mm:ss[-yyyy/MM/dd.hh:mm:ss]\n"
 					, name);
@@ -209,12 +205,17 @@ double 					fps;
 } // End of send_blast
 
 static void send_data(char *rfile, time_t twin_start, 
-			time_t twin_end, uint32_t count, unsigned int delay, int confirm, int netflow_version) {
+			time_t twin_end, uint32_t count, unsigned int delay, int confirm, int netflow_version, int distribution) {
 master_record_t	master_record;
 common_record_t	*flow_record;
 nffile_t		*nffile;
 int 			i, done, ret, again;
 uint32_t		numflows, cnt;
+
+	// z-parameter variables
+	struct timeval todayTime, currentTime;
+	double first, last, now, today = 0, reftime = 0;
+	int reducer = 0;
 
 #ifdef COMPAT15
 int	v1_map_done = 0;
@@ -412,6 +413,31 @@ int	v1_map_done = 0;
 					LogError("Skip unknown record type %i\n", flow_record->type);
 				}
 			}
+
+			// z-parameter
+			//first and last are line (tstart and tend) timestamp with milliseconds
+			first = (double) flow_record->first + ((double)flow_record->msec_first / 1000);
+			last = (double) flow_record->last + ((double)flow_record->msec_last / 1000);
+
+			gettimeofday(&currentTime, NULL);
+			now =  (double)currentTime.tv_sec + (double)currentTime.tv_usec / 1000000;
+
+			// remove incoherent values
+			if (reftime == 0 && last > 1000000000 && last < 2000000000){
+				reftime = last;
+				gettimeofday(&todayTime, NULL);
+	 			today =  (double)todayTime.tv_sec + (double)todayTime.tv_usec / 1000000;
+			}
+
+			// Reducer avoid to have too much computation: It takes 1 over 3 line to regulate sending time
+			if (reducer % 3 == 0 && distribution != 0 && reftime != 0 && last > 1000000000){
+				while (last - reftime > distribution * (now - today)){
+					gettimeofday(&currentTime, NULL);
+					now =  (double)currentTime.tv_sec + (double)currentTime.tv_usec / 1000000;
+				}
+			}
+			reducer++;
+
 			// Advance pointer by number of bytes for netflow record
 			flow_record = (common_record_t *)((pointer_addr_t)flow_record + flow_record->size);	
 
@@ -443,7 +469,7 @@ int	v1_map_done = 0;
 int main( int argc, char **argv ) {
 struct stat stat_buff;
 char *rfile, *ffile, *filter, *tstring;
-int c, confirm, ffd, ret, blast, netflow_version;
+int c, confirm, ffd, ret, blast, netflow_version, distribution;
 unsigned int delay, count, sockbuff_size;
 time_t t_start, t_end;
 
@@ -463,7 +489,8 @@ time_t t_start, t_end;
 	blast			= 0;
 	verbose			= 0;
 	confirm			= 0;
-	while ((c = getopt(argc, argv, "46BhH:i:K:L:p:d:c:b:j:r:f:t:v:VY")) != EOF) {
+	distribution	= 0;
+	while ((c = getopt(argc, argv, "46BhH:i:K:L:p:d:c:b:j:r:f:t:v:z:VY")) != EOF) {
 		switch (c) {
 			case 'h':
 				usage(argv[0]);
@@ -528,6 +555,9 @@ time_t t_start, t_end;
 				break;
 			case 'r':
 				rfile = optarg;
+				break;
+			case 'z':
+				distribution = atoi(optarg);
 				break;
 			case '4':
 				if ( peer.family == AF_UNSPEC )
@@ -616,7 +646,7 @@ time_t t_start, t_end;
 			exit(255);
 	}
 
-	send_data(rfile, t_start, t_end, count, delay, confirm, netflow_version);
+	send_data(rfile, t_start, t_end, count, delay, confirm, netflow_version,distribution);
 
 	FreeExtensionMaps(extension_map_list);
 

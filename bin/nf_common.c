@@ -1,4 +1,5 @@
 /*
+ *  Copyright (c) 2017, Peter Haag
  *  Copyright (c) 2016, Peter Haag
  *  Copyright (c) 2014, Peter Haag
  *  Copyright (c) 2009, Peter Haag
@@ -29,12 +30,12 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *	
  */
 
 #include "config.h"
 
 #include <stdio.h>
+#include <stddef.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -73,6 +74,16 @@ static int		do_tag 		 = 0;
 static int 		long_v6 	 = 0;
 static int		scale	 	 = 1;
 static double	duration;
+
+#ifdef NSEL
+static char *NSEL_event_string[6] = {
+	"IGNORE", "CREATE", "DELETE", "DENIED", "ALERT", "UPDATE"
+};
+
+static char *NEL_event_string[3] = {
+	"INVALID", "ADD", "DELETE"
+};
+#endif
 
 #define STRINGSIZE 10240
 #define IP_STRING_LEN (INET6_ADDRSTRLEN)
@@ -210,6 +221,8 @@ static void String_MPLSs(master_record_t *r, char *string);
 
 static void String_Engine(master_record_t *r, char *string);
 
+static void String_Label(master_record_t *r, char *string);
+
 static void String_ClientLatency(master_record_t *r, char *string);
 
 static void String_ServerLatency(master_record_t *r, char *string);
@@ -342,6 +355,7 @@ static struct format_token_list_s {
 	{ "%pps", 0, "     pps", 			 	String_pps },			// pps - packets per second
 	{ "%bpp", 0, "   Bpp", 				 	String_bpp },			// bpp - Bytes per package
 	{ "%eng", 0, " engine", 			 	String_Engine },		// Engine Type/ID
+	{ "%lbl", 0, "           label", 		String_Label },			// Flow Label
 
 #ifdef NSEL
 // NSEL specifics
@@ -380,7 +394,7 @@ static struct format_token_list_s {
 	{ "%pbsize",  0, "Pb-Size", 			  String_PortBlockSize},	// Port block size
 #endif
 
-	// nprobe latency
+	// latency extension for nfpcapd and nprobe
 	{ "%cl", 0, "C Latency", 	 		 	String_ClientLatency },	// client latency
 	{ "%sl", 0, "S latency", 	 		 	String_ServerLatency },	// server latency
 	{ "%al", 0, "A latency", 			 	String_AppLatency },	// app latency
@@ -566,14 +580,6 @@ static struct fwd_status_def_s {
 	{ 0,	NULL}		// Last entry
 };
 
-char *NSEL_event_string[6] = {
-	"IGNORE", "CREATE", "DELETE", "DENIED", "ALERT", "UPDATE"
-};
-
-char *NEL_event_string[3] = {
-	"INVALID", "ADD", "DELETE"
-};
-
 static char **fwd_status = NULL;
 
 #include "applybits_inline.c"
@@ -656,7 +662,7 @@ char *Get_fwd_status_name(uint32_t id) {
 
 } // End of Get_fwd_status_name
 
-void format_file_block_header(void *header, char ** s, int tag) {
+void format_file_block_header(void *header, char **s, int tag) {
 data_block_header_t *h = (data_block_header_t *)header;
 	
 	snprintf(data_string,STRINGSIZE-1 ,""
@@ -671,7 +677,7 @@ data_block_header_t *h = (data_block_header_t *)header;
 
 } // End of format_file_block_header
 
-void format_file_block_record(void *record, char ** s, int tag) {
+void format_file_block_record(void *record, char **s, int tag) {
 char 		*_s, as[IP_STRING_LEN], ds[IP_STRING_LEN], datestr1[64], datestr2[64], datestr3[64], flags_str[16];
 char		s_snet[IP_STRING_LEN], s_dnet[IP_STRING_LEN], s_proto[32];
 int			i, id;
@@ -688,16 +694,16 @@ extension_map_t	*extension_map = r->map_ref;
 		uint64_t dnet[2];
 
 		// remember IPs for network 
-		snet[0] = r->v6.srcaddr[0];
-		snet[1] = r->v6.srcaddr[1];
-		dnet[0] = r->v6.dstaddr[0];
-		dnet[1] = r->v6.dstaddr[1];
-		r->v6.srcaddr[0] = htonll(r->v6.srcaddr[0]);
-		r->v6.srcaddr[1] = htonll(r->v6.srcaddr[1]);
-		r->v6.dstaddr[0] = htonll(r->v6.dstaddr[0]);
-		r->v6.dstaddr[1] = htonll(r->v6.dstaddr[1]);
-		inet_ntop(AF_INET6, r->v6.srcaddr, as, sizeof(as));
-		inet_ntop(AF_INET6, r->v6.dstaddr, ds, sizeof(ds));
+		snet[0] = r->V6.srcaddr[0];
+		snet[1] = r->V6.srcaddr[1];
+		dnet[0] = r->V6.dstaddr[0];
+		dnet[1] = r->V6.dstaddr[1];
+		r->V6.srcaddr[0] = htonll(r->V6.srcaddr[0]);
+		r->V6.srcaddr[1] = htonll(r->V6.srcaddr[1]);
+		r->V6.dstaddr[0] = htonll(r->V6.dstaddr[0]);
+		r->V6.dstaddr[1] = htonll(r->V6.dstaddr[1]);
+		inet_ntop(AF_INET6, r->V6.srcaddr, as, sizeof(as));
+		inet_ntop(AF_INET6, r->V6.dstaddr, ds, sizeof(ds));
 		if ( ! long_v6 ) {
 			condense_v6(as);
 			condense_v6(ds);
@@ -734,12 +740,12 @@ extension_map_t	*extension_map = r->map_ref;
 
 	} else {	// IPv4
 		uint32_t snet, dnet;
-		snet = r->v4.srcaddr;
-		dnet = r->v4.dstaddr;
-		r->v4.srcaddr = htonl(r->v4.srcaddr);
-		r->v4.dstaddr = htonl(r->v4.dstaddr);
-		inet_ntop(AF_INET, &r->v4.srcaddr, as, sizeof(as));
-		inet_ntop(AF_INET, &r->v4.dstaddr, ds, sizeof(ds));
+		snet = r->V4.srcaddr;
+		dnet = r->V4.dstaddr;
+		r->V4.srcaddr = htonl(r->V4.srcaddr);
+		r->V4.dstaddr = htonl(r->V4.dstaddr);
+		inet_ntop(AF_INET, &r->V4.srcaddr, as, sizeof(as));
+		inet_ntop(AF_INET, &r->V4.dstaddr, ds, sizeof(ds));
 		if ( r->src_mask || r->dst_mask) {
 			snet &= 0xffffffffL << ( 32 - r->src_mask );
 			snet = htonl(snet);
@@ -771,6 +777,7 @@ extension_map_t	*extension_map = r->map_ref;
 	snprintf(_s, slen-1, "\n"
 "Flow Record: \n"
 "  Flags        =              0x%.2x %s, %s\n"
+"  label        =  %16s\n"
 "  export sysid =             %5u\n"
 "  size         =             %5u\n"
 "  first        =        %10u [%s]\n"
@@ -781,7 +788,9 @@ extension_map_t	*extension_map = r->map_ref;
 "  dst addr     =  %16s\n"
 , 
 		r->flags, TestFlag(r->flags, FLAG_EVENT) ? "EVENT" : "FLOW", 
-		TestFlag(r->flags, FLAG_SAMPLED) ? "Sampled" : "Unsampled", r->exporter_sysid, r->size, r->first, 
+		TestFlag(r->flags, FLAG_SAMPLED) ? "Sampled" : "Unsampled", 
+		r->label ? r->label : "<none>",
+		r->exporter_sysid, r->size, r->first, 
 		datestr1, r->last, datestr2, r->msec_first, r->msec_last, 
 		as, ds );
 
@@ -870,8 +879,8 @@ extension_map_t	*extension_map = r->map_ref;
 				break;
 			case EX_NEXT_HOP_v4:
 				as[0] = 0;
-				r->ip_nexthop.v4 = htonl(r->ip_nexthop.v4);
-				inet_ntop(AF_INET, &r->ip_nexthop.v4, as, sizeof(as));
+				r->ip_nexthop.V4 = htonl(r->ip_nexthop.V4);
+				inet_ntop(AF_INET, &r->ip_nexthop.V4, as, sizeof(as));
 				as[IP_STRING_LEN-1] = 0;
 
 				snprintf(_s, slen-1,
@@ -884,9 +893,9 @@ extension_map_t	*extension_map = r->map_ref;
 			break;
 			case EX_NEXT_HOP_v6:
 				as[0] = 0;
-				r->ip_nexthop.v6[0] = htonll(r->ip_nexthop.v6[0]);
-				r->ip_nexthop.v6[1] = htonll(r->ip_nexthop.v6[1]);
-				inet_ntop(AF_INET6, r->ip_nexthop.v6, as, sizeof(as));
+				r->ip_nexthop.V6[0] = htonll(r->ip_nexthop.V6[0]);
+				r->ip_nexthop.V6[1] = htonll(r->ip_nexthop.V6[1]);
+				inet_ntop(AF_INET6, r->ip_nexthop.V6, as, sizeof(as));
 				if ( ! long_v6 ) {
 					condense_v6(as);
 					condense_v6(ds);
@@ -902,8 +911,8 @@ extension_map_t	*extension_map = r->map_ref;
 			break;
 			case EX_NEXT_HOP_BGP_v4:
 				as[0] = 0;
-				r->bgp_nexthop.v4 = htonl(r->bgp_nexthop.v4);
-				inet_ntop(AF_INET, &r->bgp_nexthop.v4, as, sizeof(as));
+				r->bgp_nexthop.V4 = htonl(r->bgp_nexthop.V4);
+				inet_ntop(AF_INET, &r->bgp_nexthop.V4, as, sizeof(as));
 				as[IP_STRING_LEN-1] = 0;
 
 				snprintf(_s, slen-1,
@@ -916,9 +925,9 @@ extension_map_t	*extension_map = r->map_ref;
 			break;
 			case EX_NEXT_HOP_BGP_v6:
 				as[0] = 0;
-				r->bgp_nexthop.v6[0] = htonll(r->bgp_nexthop.v6[0]);
-				r->bgp_nexthop.v6[1] = htonll(r->bgp_nexthop.v6[1]);
-				inet_ntop(AF_INET6, r->ip_nexthop.v6, as, sizeof(as));
+				r->bgp_nexthop.V6[0] = htonll(r->bgp_nexthop.V6[0]);
+				r->bgp_nexthop.V6[1] = htonll(r->bgp_nexthop.V6[1]);
+				inet_ntop(AF_INET6, r->ip_nexthop.V6, as, sizeof(as));
 				if ( ! long_v6 ) {
 					condense_v6(as);
 					condense_v6(ds);
@@ -1019,8 +1028,8 @@ extension_map_t	*extension_map = r->map_ref;
 			} break;
 			case EX_ROUTER_IP_v4:
 				as[0] = 0;
-				r->ip_router.v4 = htonl(r->ip_router.v4);
-				inet_ntop(AF_INET, &r->ip_router.v4, as, sizeof(as));
+				r->ip_router.V4 = htonl(r->ip_router.V4);
+				inet_ntop(AF_INET, &r->ip_router.V4, as, sizeof(as));
 				as[IP_STRING_LEN-1] = 0;
 
 				snprintf(_s, slen-1,
@@ -1033,9 +1042,9 @@ extension_map_t	*extension_map = r->map_ref;
 			break;
 			case EX_ROUTER_IP_v6:
 				as[0] = 0;
-				r->ip_router.v6[0] = htonll(r->ip_router.v6[0]);
-				r->ip_router.v6[1] = htonll(r->ip_router.v6[1]);
-				inet_ntop(AF_INET6, &r->ip_router.v6, as, sizeof(as));
+				r->ip_router.V6[0] = htonll(r->ip_router.V6[0]);
+				r->ip_router.V6[1] = htonll(r->ip_router.V6[1]);
+				inet_ntop(AF_INET6, &r->ip_router.V6, as, sizeof(as));
 				if ( ! long_v6 ) {
 					condense_v6(as);
 				}
@@ -1143,10 +1152,10 @@ extension_map_t	*extension_map = r->map_ref;
 			case EX_NSEL_XLATE_IP_v4:
 				as[0] = 0;
 				ds[0] = 0;
-				r->xlate_src_ip.v4 = htonl(r->xlate_src_ip.v4);
-				r->xlate_dst_ip.v4 = htonl(r->xlate_dst_ip.v4);
-				inet_ntop(AF_INET, &r->xlate_src_ip.v4, as, sizeof(as));
-				inet_ntop(AF_INET, &r->xlate_dst_ip.v4, ds, sizeof(ds));
+				r->xlate_src_ip.V4 = htonl(r->xlate_src_ip.V4);
+				r->xlate_dst_ip.V4 = htonl(r->xlate_dst_ip.V4);
+				inet_ntop(AF_INET, &r->xlate_src_ip.V4, as, sizeof(as));
+				inet_ntop(AF_INET, &r->xlate_dst_ip.V4, ds, sizeof(ds));
 				as[IP_STRING_LEN-1] = 0;
 				ds[IP_STRING_LEN-1] = 0;
 
@@ -1161,12 +1170,12 @@ extension_map_t	*extension_map = r->map_ref;
 			case EX_NSEL_XLATE_IP_v6:
 				as[0] = 0;
 				ds[0] = 0;
-				r->xlate_src_ip.v6[0] = htonll(r->xlate_src_ip.v6[0]);
-				r->xlate_src_ip.v6[1] = htonll(r->xlate_src_ip.v6[1]);
-				r->xlate_dst_ip.v6[0] = htonll(r->xlate_dst_ip.v6[0]);
-				r->xlate_dst_ip.v6[1] = htonll(r->xlate_dst_ip.v6[1]);
-				inet_ntop(AF_INET6, &r->xlate_src_ip.v6, as, sizeof(as));
-				inet_ntop(AF_INET6, &r->xlate_dst_ip.v6, ds, sizeof(ds));
+				r->xlate_src_ip.V6[0] = htonll(r->xlate_src_ip.V6[0]);
+				r->xlate_src_ip.V6[1] = htonll(r->xlate_src_ip.V6[1]);
+				r->xlate_dst_ip.V6[0] = htonll(r->xlate_dst_ip.V6[0]);
+				r->xlate_dst_ip.V6[1] = htonll(r->xlate_dst_ip.V6[1]);
+				inet_ntop(AF_INET6, &r->xlate_src_ip.V6, as, sizeof(as));
+				inet_ntop(AF_INET6, &r->xlate_dst_ip.V6, ds, sizeof(ds));
 				if ( ! long_v6 ) {
 					condense_v6(as);
 					condense_v6(ds);
@@ -1227,15 +1236,15 @@ master_record_t *r = (master_record_t *)record;
 	}
 
 	// Make sure Endian does not screw us up
-    sa[0] = ( r->v6.srcaddr[0] >> 32 ) & 0xffffffffLL;
-    sa[1] = r->v6.srcaddr[0] & 0xffffffffLL;
-    sa[2] = ( r->v6.srcaddr[1] >> 32 ) & 0xffffffffLL;
-    sa[3] = r->v6.srcaddr[1] & 0xffffffffLL;
+    sa[0] = ( r->V6.srcaddr[0] >> 32 ) & 0xffffffffLL;
+    sa[1] = r->V6.srcaddr[0] & 0xffffffffLL;
+    sa[2] = ( r->V6.srcaddr[1] >> 32 ) & 0xffffffffLL;
+    sa[3] = r->V6.srcaddr[1] & 0xffffffffLL;
 
-    da[0] = ( r->v6.dstaddr[0] >> 32 ) & 0xffffffffLL;
-    da[1] = r->v6.dstaddr[0] & 0xffffffffLL;
-    da[2] = ( r->v6.dstaddr[1] >> 32 ) & 0xffffffffLL;
-    da[3] = r->v6.dstaddr[1] & 0xffffffffLL;
+    da[0] = ( r->V6.dstaddr[0] >> 32 ) & 0xffffffffLL;
+    da[1] = r->V6.dstaddr[0] & 0xffffffffLL;
+    da[2] = ( r->V6.dstaddr[1] >> 32 ) & 0xffffffffLL;
+    da[3] = r->V6.dstaddr[1] & 0xffffffffLL;
 
 	snprintf(data_string, STRINGSIZE-1 ,"%i|%u|%u|%u|%u|%u|%u|%u|%u|%u|%u|%u|%u|%u|%u|%u|%u|%u|%u|%u|%u|%u|%llu|%llu",
 		af, r->first, r->msec_first ,r->last, r->msec_last, r->prot, 
@@ -1265,16 +1274,16 @@ master_record_t *r = (master_record_t *)record;
 		uint64_t dnet[2];
 
 		// remember IPs for network 
-		snet[0] = r->v6.srcaddr[0];
-		snet[1] = r->v6.srcaddr[1];
-		dnet[0] = r->v6.dstaddr[0];
-		dnet[1] = r->v6.dstaddr[1];
-		r->v6.srcaddr[0] = htonll(r->v6.srcaddr[0]);
-		r->v6.srcaddr[1] = htonll(r->v6.srcaddr[1]);
-		r->v6.dstaddr[0] = htonll(r->v6.dstaddr[0]);
-		r->v6.dstaddr[1] = htonll(r->v6.dstaddr[1]);
-		inet_ntop(AF_INET6, r->v6.srcaddr, as, sizeof(as));
-		inet_ntop(AF_INET6, r->v6.dstaddr, ds, sizeof(ds));
+		snet[0] = r->V6.srcaddr[0];
+		snet[1] = r->V6.srcaddr[1];
+		dnet[0] = r->V6.dstaddr[0];
+		dnet[1] = r->V6.dstaddr[1];
+		r->V6.srcaddr[0] = htonll(r->V6.srcaddr[0]);
+		r->V6.srcaddr[1] = htonll(r->V6.srcaddr[1]);
+		r->V6.dstaddr[0] = htonll(r->V6.dstaddr[0]);
+		r->V6.dstaddr[1] = htonll(r->V6.dstaddr[1]);
+		inet_ntop(AF_INET6, r->V6.srcaddr, as, sizeof(as));
+		inet_ntop(AF_INET6, r->V6.dstaddr, ds, sizeof(ds));
 
 		if ( r->src_mask || r->dst_mask) {
 			if ( r->src_mask > 64 )
@@ -1304,12 +1313,12 @@ master_record_t *r = (master_record_t *)record;
 
 	} else {	// IPv4
 		uint32_t snet, dnet;
-		snet = r->v4.srcaddr;
-		dnet = r->v4.dstaddr;
-		r->v4.srcaddr = htonl(r->v4.srcaddr);
-		r->v4.dstaddr = htonl(r->v4.dstaddr);
-		inet_ntop(AF_INET, &r->v4.srcaddr, as, sizeof(as));
-		inet_ntop(AF_INET, &r->v4.dstaddr, ds, sizeof(ds));
+		snet = r->V4.srcaddr;
+		dnet = r->V4.dstaddr;
+		r->V4.srcaddr = htonl(r->V4.srcaddr);
+		r->V4.dstaddr = htonl(r->V4.dstaddr);
+		inet_ntop(AF_INET, &r->V4.srcaddr, as, sizeof(as));
+		inet_ntop(AF_INET, &r->V4.dstaddr, ds, sizeof(ds));
 		if ( r->src_mask || r->dst_mask) {
 			snet &= 0xffffffffL << ( 32 - r->src_mask );
 			snet = htonl(snet);
@@ -1388,9 +1397,9 @@ master_record_t *r = (master_record_t *)record;
 	if ( (r->flags & FLAG_IPV6_NH ) != 0 ) { // IPv6
 		// EX_NEXT_HOP_v6:
 		as[0] = 0;
-		r->ip_nexthop.v6[0] = htonll(r->ip_nexthop.v6[0]);
-		r->ip_nexthop.v6[1] = htonll(r->ip_nexthop.v6[1]);
-		inet_ntop(AF_INET6, r->ip_nexthop.v6, as, sizeof(as));
+		r->ip_nexthop.V6[0] = htonll(r->ip_nexthop.V6[0]);
+		r->ip_nexthop.V6[1] = htonll(r->ip_nexthop.V6[1]);
+		inet_ntop(AF_INET6, r->ip_nexthop.V6, as, sizeof(as));
 		as[IP_STRING_LEN-1] = 0;
 	
 		snprintf(_s, slen-1, ",%s", as);
@@ -1401,8 +1410,8 @@ master_record_t *r = (master_record_t *)record;
 	} else {
 		// EX_NEXT_HOP_v4:
 		as[0] = 0;
-		r->ip_nexthop.v4 = htonl(r->ip_nexthop.v4);
-		inet_ntop(AF_INET, &r->ip_nexthop.v4, as, sizeof(as));
+		r->ip_nexthop.V4 = htonl(r->ip_nexthop.V4);
+		inet_ntop(AF_INET, &r->ip_nexthop.V4, as, sizeof(as));
 		as[IP_STRING_LEN-1] = 0;
 
 		snprintf(_s, slen-1, ",%s", as);
@@ -1414,9 +1423,9 @@ master_record_t *r = (master_record_t *)record;
 	if ( (r->flags & FLAG_IPV6_NH ) != 0 ) { // IPv6
 		// EX_NEXT_HOP_BGP_v6:
 		as[0] = 0;
-		r->bgp_nexthop.v6[0] = htonll(r->bgp_nexthop.v6[0]);
-		r->bgp_nexthop.v6[1] = htonll(r->bgp_nexthop.v6[1]);
-		inet_ntop(AF_INET6, r->ip_nexthop.v6, as, sizeof(as));
+		r->bgp_nexthop.V6[0] = htonll(r->bgp_nexthop.V6[0]);
+		r->bgp_nexthop.V6[1] = htonll(r->bgp_nexthop.V6[1]);
+		inet_ntop(AF_INET6, r->ip_nexthop.V6, as, sizeof(as));
 		as[IP_STRING_LEN-1] = 0;
 	
 		snprintf(_s, slen-1, ",%s", as);
@@ -1427,8 +1436,8 @@ master_record_t *r = (master_record_t *)record;
 	} else {
 		// 	EX_NEXT_HOP_BGP_v4:
 		as[0] = 0;
-		r->bgp_nexthop.v4 = htonl(r->bgp_nexthop.v4);
-		inet_ntop(AF_INET, &r->bgp_nexthop.v4, as, sizeof(as));
+		r->bgp_nexthop.V4 = htonl(r->bgp_nexthop.V4);
+		inet_ntop(AF_INET, &r->bgp_nexthop.V4, as, sizeof(as));
 		as[IP_STRING_LEN-1] = 0;
 
 		snprintf(_s, slen-1, ",%s", as);
@@ -1523,9 +1532,9 @@ master_record_t *r = (master_record_t *)record;
 	if ( (r->flags & FLAG_IPV6_EXP ) != 0 ) { // IPv6
 		// EX_NEXT_HOP_v6:
 		as[0] = 0;
-		r->ip_router.v6[0] = htonll(r->ip_router.v6[0]);
-		r->ip_router.v6[1] = htonll(r->ip_router.v6[1]);
-		inet_ntop(AF_INET6, r->ip_router.v6, as, sizeof(as));
+		r->ip_router.V6[0] = htonll(r->ip_router.V6[0]);
+		r->ip_router.V6[1] = htonll(r->ip_router.V6[1]);
+		inet_ntop(AF_INET6, r->ip_router.V6, as, sizeof(as));
 		as[IP_STRING_LEN-1] = 0;
 	
 		snprintf(_s, slen-1, ",%s", as);
@@ -1536,8 +1545,8 @@ master_record_t *r = (master_record_t *)record;
 	} else {
 		// EX_NEXT_HOP_v4:
 		as[0] = 0;
-		r->ip_router.v4 = htonl(r->ip_router.v4);
-		inet_ntop(AF_INET, &r->ip_router.v4, as, sizeof(as));
+		r->ip_router.V4 = htonl(r->ip_router.V4);
+		inet_ntop(AF_INET, &r->ip_router.V4, as, sizeof(as));
 		as[IP_STRING_LEN-1] = 0;
 
 		snprintf(_s, slen-1, ",%s", as);
@@ -1931,15 +1940,15 @@ char tmp_str[IP_STRING_LEN];
 	if ( (r->flags & FLAG_IPV6_ADDR ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->v6.srcaddr[0]);
-		ip[1] = htonll(r->v6.srcaddr[1]);
+		ip[0] = htonll(r->V6.srcaddr[0]);
+		ip[1] = htonll(r->V6.srcaddr[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
 		}
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->v4.srcaddr);
+		ip = htonl(r->V4.srcaddr);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 	}
 	tmp_str[IP_STRING_LEN-1] = 0;
@@ -1960,8 +1969,8 @@ char 	tmp_str[IP_STRING_LEN], portchar;
 	if ( (r->flags & FLAG_IPV6_ADDR ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->v6.srcaddr[0]);
-		ip[1] = htonll(r->v6.srcaddr[1]);
+		ip[0] = htonll(r->V6.srcaddr[0]);
+		ip[1] = htonll(r->V6.srcaddr[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
@@ -1969,7 +1978,7 @@ char 	tmp_str[IP_STRING_LEN], portchar;
 		portchar = '.';
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->v4.srcaddr);
+		ip = htonl(r->V4.srcaddr);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 		portchar = ':';
 	}
@@ -1991,15 +2000,15 @@ char tmp_str[IP_STRING_LEN];
 	if ( (r->flags & FLAG_IPV6_ADDR ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->v6.dstaddr[0]);
-		ip[1] = htonll(r->v6.dstaddr[1]);
+		ip[0] = htonll(r->V6.dstaddr[0]);
+		ip[1] = htonll(r->V6.dstaddr[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
 		}
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->v4.dstaddr);
+		ip = htonl(r->V4.dstaddr);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 	}
 	tmp_str[IP_STRING_LEN-1] = 0;
@@ -2021,15 +2030,15 @@ char tmp_str[IP_STRING_LEN];
 	if ( (r->flags & FLAG_IPV6_NH ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->ip_nexthop.v6[0]);
-		ip[1] = htonll(r->ip_nexthop.v6[1]);
+		ip[0] = htonll(r->ip_nexthop.V6[0]);
+		ip[1] = htonll(r->ip_nexthop.V6[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
 		}
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->ip_nexthop.v4);
+		ip = htonl(r->ip_nexthop.V4);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 	}
 	tmp_str[IP_STRING_LEN-1] = 0;
@@ -2050,15 +2059,15 @@ char tmp_str[IP_STRING_LEN];
 	if ( (r->flags & FLAG_IPV6_NH ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->bgp_nexthop.v6[0]);
-		ip[1] = htonll(r->bgp_nexthop.v6[1]);
+		ip[0] = htonll(r->bgp_nexthop.V6[0]);
+		ip[1] = htonll(r->bgp_nexthop.V6[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
 		}
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->bgp_nexthop.v4);
+		ip = htonl(r->bgp_nexthop.V4);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 	}
 	tmp_str[IP_STRING_LEN-1] = 0;
@@ -2079,15 +2088,15 @@ char tmp_str[IP_STRING_LEN];
 	if ( (r->flags & FLAG_IPV6_EXP ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->ip_router.v6[0]);
-		ip[1] = htonll(r->ip_router.v6[1]);
+		ip[0] = htonll(r->ip_router.V6[0]);
+		ip[1] = htonll(r->ip_router.V6[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
 		}
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->ip_router.v4);
+		ip = htonl(r->ip_router.V4);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 	}
 	tmp_str[IP_STRING_LEN-1] = 0;
@@ -2110,8 +2119,8 @@ char 	icmp_port[MAX_STRING_LENGTH];
 	if ( (r->flags & FLAG_IPV6_ADDR ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->v6.dstaddr[0]);
-		ip[1] = htonll(r->v6.dstaddr[1]);
+		ip[0] = htonll(r->V6.dstaddr[0]);
+		ip[1] = htonll(r->V6.dstaddr[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
@@ -2119,7 +2128,7 @@ char 	icmp_port[MAX_STRING_LENGTH];
 		portchar = '.';
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->v4.dstaddr);
+		ip = htonl(r->V4.dstaddr);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 		portchar = ':';
 	}
@@ -2144,15 +2153,15 @@ char tmp_str[IP_STRING_LEN];
 	if ( (r->flags & FLAG_IPV6_ADDR ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->v6.srcaddr[0]);
-		ip[1] = htonll(r->v6.srcaddr[1]);
+		ip[0] = htonll(r->V6.srcaddr[0]);
+		ip[1] = htonll(r->V6.srcaddr[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
 		}
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->v4.srcaddr);
+		ip = htonl(r->V4.srcaddr);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 	}
 	tmp_str[IP_STRING_LEN-1] = 0;
@@ -2175,15 +2184,15 @@ char tmp_str[IP_STRING_LEN];
 	if ( (r->flags & FLAG_IPV6_ADDR ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->v6.dstaddr[0]);
-		ip[1] = htonll(r->v6.dstaddr[1]);
+		ip[0] = htonll(r->V6.dstaddr[0]);
+		ip[1] = htonll(r->V6.dstaddr[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
 		}
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->v4.dstaddr);
+		ip = htonl(r->V4.dstaddr);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 	}
 	tmp_str[IP_STRING_LEN-1] = 0;
@@ -2384,7 +2393,7 @@ static void String_Flags(master_record_t *r, char *string) {
 
 	// if record contains unusuall flags, print the flags in hex as 0x.. number
 	if ( r->tcp_flags > 63 ) {
-		snprintf(string, 7, "  0x%2x\n", r->tcp_flags );
+		snprintf(string, 7, "  0x%2x", r->tcp_flags );
 	} else {
 		string[0] = r->tcp_flags & 32 ? 'U' : '.';
 		string[1] = r->tcp_flags & 16 ? 'A' : '.';
@@ -2549,6 +2558,17 @@ static void String_Engine(master_record_t *r, char *string) {
 	string[MAX_STRING_LENGTH-1] = '\0';
 
 } // End of String_Engine
+
+static void String_Label(master_record_t *r, char *string) {
+
+	if ( r->label ) 
+		snprintf(string, MAX_STRING_LENGTH-1 ,"%16s", r->label);
+	else
+		snprintf(string, MAX_STRING_LENGTH-1 ,"<none>");
+
+	string[MAX_STRING_LENGTH-1] = '\0';
+
+} // End of String_Label
 
 static void String_ClientLatency(master_record_t *r, char *string) {
 double latency;
@@ -2741,15 +2761,15 @@ char tmp_str[IP_STRING_LEN];
 	if ( (r->xlate_flags & 1 ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->xlate_src_ip.v6[0]);
-		ip[1] = htonll(r->xlate_src_ip.v6[1]);
+		ip[0] = htonll(r->xlate_src_ip.V6[0]);
+		ip[1] = htonll(r->xlate_src_ip.V6[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
 		}
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->xlate_src_ip.v4);
+		ip = htonl(r->xlate_src_ip.V4);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 	}
 	tmp_str[IP_STRING_LEN-1] = 0;
@@ -2769,15 +2789,15 @@ char tmp_str[IP_STRING_LEN];
 	if ( (r->xlate_flags & 1 ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->xlate_dst_ip.v6[0]);
-		ip[1] = htonll(r->xlate_dst_ip.v6[1]);
+		ip[0] = htonll(r->xlate_dst_ip.V6[0]);
+		ip[1] = htonll(r->xlate_dst_ip.V6[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
 		}
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->xlate_dst_ip.v4);
+		ip = htonl(r->xlate_dst_ip.V4);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 	}
 	tmp_str[IP_STRING_LEN-1] = 0;
@@ -2811,8 +2831,8 @@ char 	tmp_str[IP_STRING_LEN], portchar;
 	if ( (r->xlate_flags & 1 ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->xlate_src_ip.v6[0]);
-		ip[1] = htonll(r->xlate_src_ip.v6[1]);
+		ip[0] = htonll(r->xlate_src_ip.V6[0]);
+		ip[1] = htonll(r->xlate_src_ip.V6[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
@@ -2821,7 +2841,7 @@ char 	tmp_str[IP_STRING_LEN], portchar;
 		portchar = '.';
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->xlate_src_ip.v4);
+		ip = htonl(r->xlate_src_ip.V4);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 
 		portchar = ':';
@@ -2844,8 +2864,8 @@ char 	tmp_str[IP_STRING_LEN], portchar;
 	if ( (r->xlate_flags & 1 ) != 0 ) { // IPv6
 		uint64_t	ip[2];
 
-		ip[0] = htonll(r->xlate_dst_ip.v6[0]);
-		ip[1] = htonll(r->xlate_dst_ip.v6[1]);
+		ip[0] = htonll(r->xlate_dst_ip.V6[0]);
+		ip[1] = htonll(r->xlate_dst_ip.V6[1]);
 		inet_ntop(AF_INET6, ip, tmp_str, sizeof(tmp_str));
 		if ( ! long_v6 ) {
 			condense_v6(tmp_str);
@@ -2854,7 +2874,7 @@ char 	tmp_str[IP_STRING_LEN], portchar;
 		portchar = '.';
 	} else {	// IPv4
 		uint32_t	ip;
-		ip = htonl(r->xlate_dst_ip.v4);
+		ip = htonl(r->xlate_dst_ip.V4);
 		inet_ntop(AF_INET, &ip, tmp_str, sizeof(tmp_str));
 
 		portchar = ':';

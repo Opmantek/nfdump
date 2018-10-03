@@ -1,5 +1,7 @@
 /*
  *  All rights reserved.
+ *  Copyright (c) 2017, Peter Haag
+ *  Copyright (c) 2016, Peter Haag
  *  Copyright (c) 2014, Peter Haag
  *  Copyright (c) 2009, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
@@ -32,16 +34,11 @@
  *  
  *  Flow-Tools related code taken from flow-tools-0.67 cretated by Mark Fullmer
  *
- *  $Author: haag $
- *
- *  $Id: ft2nfdump.c 69 2010-09-09 07:17:43Z haag $
- *
- *  $LastChangedRevision: 69 $
- *	
- *
  */
 
+#ifdef HAVE_CONFIG_H 
 #include "config.h"
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -66,6 +63,7 @@
 #include "nffile.h"
 #include "nfx.h"
 #include "launch.h"
+#include "util.h"
 
 /* Global defines */
 #define MAXRECORDS 30
@@ -241,8 +239,8 @@ uint32_t			cnt;
 		record.last 		= ftt.secs;
 		record.msec_last 	= ftt.msecs;
 	
-		record.v4.srcaddr 	= *((uint32_t*)(rec+fo.srcaddr));
-		record.v4.dstaddr 	= *((uint32_t*)(rec+fo.dstaddr));
+		record.V4.srcaddr 	= *((uint32_t*)(rec+fo.srcaddr));
+		record.V4.dstaddr 	= *((uint32_t*)(rec+fo.dstaddr));
 		record.srcport 		= *((uint16_t*)(rec+fo.srcport));
 		record.dstport 		= *((uint16_t*)(rec+fo.dstport));
 
@@ -271,10 +269,10 @@ uint32_t			cnt;
 					record.dst_tos  	= 0;
 					break;
 				case EX_ROUTER_IP_v4:
-					record.ip_nexthop.v4 = *((uint32_t*)(rec+fo.peer_nexthop));
+					record.ip_nexthop.V4 = *((uint32_t*)(rec+fo.peer_nexthop));
 					break;
 				case EX_NEXT_HOP_v4:
-					record.ip_router.v4 = *((uint32_t*)(rec+fo.router_sc));
+					record.ip_router.V4 = *((uint32_t*)(rec+fo.router_sc));
 					break;
 				case EX_ROUTER_ID:
 					record.engine_type = *((uint8_t*)(rec+fo.engine_type));

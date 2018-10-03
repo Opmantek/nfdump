@@ -1,4 +1,5 @@
 /*
+ *  Copyright (c) 2016, Peter Haag
  *  Copyright (c) 2014, Peter Haag
  *  Copyright (c) 2009, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
@@ -28,16 +29,11 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *  $Author: haag $
- *
- *  $Id: bookkeeper.c 39 2009-11-25 08:11:15Z haag $
- *
- *  $LastChangedRevision: 39 $
- *	
- *
  */
 
+#ifdef HAVE_CONFIG_H 
 #include "config.h"
+#endif
 
 #include <stdio.h>
 #include <unistd.h>
@@ -47,6 +43,7 @@
 #include <sys/shm.h>
 #include <sys/sem.h>
 #include <sys/stat.h>
+#include <sys/param.h>
 #include <string.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -65,22 +62,14 @@ union semun {
 };
 #endif
 
-#include "config.h"
-
+#include "util.h"
 #include "bookkeeper.h"
 
 static bookkeeper_list_t *bookkeeper_list = NULL;
 
 /* function prototypes */
 
-/* 
- * bookkeeper.c is needed for daemon code as well as normal stdio code 
- * therefore a generic LogError is defined, which maps to the 
- * approriate logging channel - either stderr or syslog
- */
-void LogError(char *format, ...);
-
-static key_t _ftok(const char *path, int id);
+static key_t hash(char *str, int flag);
 
 static void sem_lock(int sem_set_id);
 
@@ -90,16 +79,28 @@ static inline bookkeeper_list_t *Get_bookkeeper_list_entry(bookkeeper_t *bookkee
 
 /* Create shared memory object and set its size */
 
-/* our own ftok implementation - the standard C library ftok is not reliable enough */
-static key_t _ftok(const char *path, int id) {
-struct stat st;
+/* hash: compute hash value of string */
+#define MULTIPLIER 37
+static key_t hash(char *str, int flag) {
+uint32_t h; 
+unsigned char *p;
+char cleanPath[MAXPATHLEN];
 
-    if (stat(path, &st) < 0)
-        return (key_t)-1;
+	if ( realpath(str, cleanPath) == NULL ) {
+		return -1;
+	}
 
-    return (key_t) ( ((st.st_dev & 0xffff) << 16) ^ st.st_ino ) + id;
-}
+	h = 0;
+	for (p = (unsigned char*)cleanPath; *p != '\0'; p++)
+		h = MULTIPLIER * h + *p;
 
+	if ( flag ) {
+		h = MULTIPLIER * h + 'R';
+	}
+	// LogError("Bookeeper hash for path: '%s' -> '%s': %u flag: %i", str, cleanPath, h, flag);
+	return (key_t)h; // or, h % ARRAY_SIZE;
+
+} // End of hash
 
 // locks the semaphore, for exclusive access to the bookkeeping record
 static void sem_lock(int sem_set_id) {
@@ -152,7 +153,7 @@ bookkeeper_list_t	**bookkeeper_list_entry;
 
 	*bookkeeper = NULL;
 
-	shm_key = _ftok(path, 1); 
+	shm_key = hash(path, 0); 
 	if ( shm_key == - 1 ) 
 		return ERR_PATHACCESS;
 
@@ -240,7 +241,7 @@ bookkeeper_list_t	**bookkeeper_list_entry;
 
 	// create semaphore
 
-	sem_key = _ftok(path, 2); 
+	sem_key = hash(path, 1); 
 	// this should never fail, as we aleady got a key for the shared memory
 	if ( sem_key == - 1 ) {
 		// .. but catch it anyway .. and release shared memory. something is fishy
@@ -310,7 +311,7 @@ int sem_key, shm_key, shm_id, sem_id;
 
 	*bookkeeper = NULL;
 
-	shm_key = _ftok(path, 1); 
+	shm_key = hash(path, 0); 
 	if ( shm_key == - 1 ) 
 		return ERR_PATHACCESS;
 
@@ -341,7 +342,7 @@ int sem_key, shm_key, shm_id, sem_id;
 	// at this point we now have a valid record and can proceed
 
 	// create semaphore
-	sem_key = _ftok(path, 2); 
+	sem_key = hash(path, 1); 
 	// this should never fail, as we aleady got a key for the shared memory
 	if ( sem_key == - 1 ) {
 		// .. but catch it anyway .. and release shared memory. something is fishy

@@ -1,6 +1,6 @@
 /*
- *  This file is part of the nfdump project.
- *
+ *  Copyright (c) 2017
+ *  Copyright (c) 2016
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
  *  
@@ -12,7 +12,7 @@
  *   * Redistributions in binary form must reproduce the above copyright notice, 
  *     this list of conditions and the following disclaimer in the documentation 
  *     and/or other materials provided with the distribution.
- *   * Neither the name of SWITCH nor the names of its contributors may be 
+ *   * Neither the name of the author nor the names of its contributors may be 
  *     used to endorse or promote products derived from this software without 
  *     specific prior written permission.
  *  
@@ -28,19 +28,13 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *  $Author: peter $
- *
- *  $Id: grammar.y 100 2008-08-15 11:36:21Z peter $
- *
- *  $LastChangedRevision: 100 $
- *	
- *
- *
  */
 
 %{
 
+#ifdef HAVE_CONFIG_H 
 #include "config.h"
+#endif
 
 #include <stdio.h>
 #include <sys/types.h>
@@ -822,7 +816,7 @@ term:	ANY { /* this is an unconditionally true expression, as a filter applies i
 
 
 		if ( $5 > (bytes*8) ) {
-			yyerror("Too many netbits for this IP addresss");
+			yyerror("Too many netbits for this IP address");
 			YYABORT;
 		}
 
@@ -1413,7 +1407,7 @@ term:	ANY { /* this is an unconditionally true expression, as a filter applies i
 
 
 		if ( $5 > (bytes*8) ) {
-			yyerror("Too many netbits for this IP addresss");
+			yyerror("Too many netbits for this IP address");
 			YYABORT;
 		}
 
@@ -1613,7 +1607,7 @@ term:	ANY { /* this is an unconditionally true expression, as a filter applies i
 			uint64_t mask;
 			uint32_t offset, shift;
 			char *s = &$2[5];
-			if ( s == '\0' ) {
+			if ( *s == '\0' ) {
 				yyerror("Missing label number");
 				YYABORT;
 			}
@@ -1684,7 +1678,7 @@ term:	ANY { /* this is an unconditionally true expression, as a filter applies i
 			uint64_t mask;
 			uint32_t offset, shift;
 			char *s = &$2[3];
-			if ( s == '\0' ) {
+			if ( *s == '\0' ) {
 				yyerror("Missing label number");
 				YYABORT;
 			}
@@ -2103,6 +2097,24 @@ expr:	term		{ $$ = $1.self;        }
 	| expr AND expr	{ $$ = Connect_AND($1, $3); }
 	| NOT expr	%prec NEGATE	{ $$ = Invert($2);			}
 	| '(' expr ')'	{ $$ = $2; }
+	| '(' expr ')' '%' STRING	{ 
+		$$ = $2; 
+		if ( strlen($5) > 16 ) {
+			yyerror("Error: Maximum 16 chars allowed for flowlabel");
+			YYABORT;
+		} else {
+			AddLabel($2, $5);
+		}
+	}
+	| '%' STRING '(' expr ')' { 
+		$$ = $4; 
+		if ( strlen($2) > 16 ) {
+			yyerror("Error: Maximum 16 chars allowed for flowlabel");
+			YYABORT;
+		} else {
+			AddLabel($4, $2);
+		}
+	}
 	;
 
 %%

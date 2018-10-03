@@ -1,4 +1,6 @@
 /*
+ *  Copyright (c) 2017, Peter Haag
+ *  Copyright (c) 2016, Peter Haag
  *  Copyright (c) 2014, Peter Haag
  *  Copyright (c) 2012, Peter Haag
  *  
@@ -26,15 +28,11 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *  $Author: peter $
- *
- *  $Id: exporter.c 224 2014-02-16 12:59:29Z peter $
- *
- *  $LastChangedRevision: 224 $
- *	
  */
 
+#ifdef HAVE_CONFIG_H 
 #include "config.h"
+#endif
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -47,7 +45,6 @@
 #include <stdlib.h>
 #include <ctype.h>
 #include <string.h>
-#include <syslog.h>
 #include <stdarg.h>
 
 #ifdef HAVE_STDINT_H
@@ -65,7 +62,6 @@
 #include "nfx.h"
 #include "nfnet.h"
 #include "bookkeeper.h"
-#include "nfxstat.h"
 #include "collector.h"
 #include "exporter.h"
 #include "nf_common.h"
@@ -155,14 +151,14 @@ char *p1, *p2;
 		#define IP_STRING_LEN   40
 		char ipstr[IP_STRING_LEN];
 		if ( exporter_record->sa_family == AF_INET ) {
-			uint32_t _ip = htonl(exporter_record->ip.v4);
+			uint32_t _ip = htonl(exporter_record->ip.V4);
 			inet_ntop(AF_INET, &_ip, ipstr, sizeof(ipstr));
 			printf("SysID: %u, IP: %16s, version: %u, ID: %2u, Slot: %u\n", exporter_record->sysid,
 				ipstr, exporter_record->version, exporter_record->id, id);
 		} else if ( exporter_record->sa_family == AF_INET6 ) {
 			uint64_t _ip[2];
-			_ip[0] = htonll(exporter_record->ip.v6[0]);
-			_ip[1] = htonll(exporter_record->ip.v6[1]);
+			_ip[0] = htonll(exporter_record->ip.V6[0]);
+			_ip[1] = htonll(exporter_record->ip.V6[1]);
 			inet_ntop(AF_INET6, &_ip, ipstr, sizeof(ipstr));
 			printf("SysID: %u, IP: %40s, version: %u, ID: %2u, Slot: %u\n", exporter_record->sysid,
 				ipstr, exporter_record->version, exporter_record->id, id);
@@ -351,14 +347,14 @@ uint64_t total_bytes;
 					found = 1;
 					printf("\n");
 					if ( exporter_record->sa_family == AF_INET ) {
-						uint32_t _ip = htonl(exporter_record->ip.v4);
+						uint32_t _ip = htonl(exporter_record->ip.V4);
 						inet_ntop(AF_INET, &_ip, ipstr, sizeof(ipstr));
 						printf("SysID: %u, IP: %16s, version: %u, ID: %2u, Sequence Failures: %u\n", exporter_record->sysid,
 							ipstr, exporter_record->version, exporter_record->exporter_id, exporter_record->sequence_failure);
 					} else if ( exporter_record->sa_family == AF_INET6 ) {
 						uint64_t _ip[2];
-						_ip[0] = htonll(exporter_record->ip.v6[0]);
-						_ip[1] = htonll(exporter_record->ip.v6[1]);
+						_ip[0] = htonll(exporter_record->ip.V6[0]);
+						_ip[1] = htonll(exporter_record->ip.V6[1]);
 						inet_ntop(AF_INET6, &_ip, ipstr, sizeof(ipstr));
 						printf("SysID: %u, IP: %40s, version: %u, ID: %2u, Sequence Failures: %u\n", exporter_record->sysid,
 							ipstr, exporter_record->version, exporter_record->exporter_id, exporter_record->sequence_failure);
@@ -414,7 +410,7 @@ uint64_t total_bytes;
 		printf("\n");
 		exporter = &exporter_list[i]->info;
 		if ( exporter->sa_family == AF_INET ) {
-			uint32_t _ip = htonl(exporter->ip.v4);
+			uint32_t _ip = htonl(exporter->ip.V4);
 			inet_ntop(AF_INET, &_ip, ipstr, sizeof(ipstr));
 			if ( exporter_list[i]->flows ) 
 				printf("SysID: %u, IP: %16s, version: %u, ID: %2u, Sequence failures: %u, packets: %llu, flows: %llu\n", 
@@ -428,8 +424,8 @@ uint64_t total_bytes;
 					
 		} else if ( exporter->sa_family == AF_INET6 ) {
 			uint64_t _ip[2];
-			_ip[0] = htonll(exporter->ip.v6[0]);
-			_ip[1] = htonll(exporter->ip.v6[1]);
+			_ip[0] = htonll(exporter->ip.V6[0]);
+			_ip[1] = htonll(exporter->ip.V6[1]);
 			inet_ntop(AF_INET6, &_ip, ipstr, sizeof(ipstr));
 			if ( exporter_list[i]->flows ) 
 				printf("SysID: %u, IP: %40s, version: %u, ID: %2u, Sequence failures: %u, packets: %llu, flows: %llu\n ", 

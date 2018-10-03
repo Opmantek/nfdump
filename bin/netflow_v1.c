@@ -1,4 +1,6 @@
 /*
+ *  Copyright (c) 2017, Peter Haag
+ *  Copyright (c) 2016, Peter Haag
  *  Copyright (c) 2014, Peter Haag
  *  Copyright (c) 2009, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
@@ -28,22 +30,17 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *  $Author: peter $
- *
- *  $Id: netflow_v1.c 30 2011-07-18 11:19:46Z peter $
- *
- *  $LastChangedRevision: 30 $
- *	
  */
 
+#ifdef HAVE_CONFIG_H 
 #include "config.h"
+#endif
 
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <unistd.h>
 #include <stdlib.h>
-#include <syslog.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <errno.h>
@@ -59,16 +56,9 @@
 #include "nfnet.h"
 #include "nf_common.h"
 #include "bookkeeper.h"
-#include "nfxstat.h"
 #include "collector.h"
 #include "exporter.h"
 #include "netflow_v1.h"
-
-#ifndef DEVEL
-#   define dbg_printf(...) /* printf(__VA_ARGS__) */
-#else
-#   define dbg_printf(...) printf(__VA_ARGS__)
-#endif
 
 extern int verbose;
 extern extension_descriptor_t extension_descriptor[];
@@ -151,7 +141,7 @@ uint16_t	map_size;
 	// Create a generic netflow v1 extension map
 	v1_extension_info.map = (extension_map_t *)malloc((size_t)map_size);
 	if ( !v1_extension_info.map ) {
-		syslog(LOG_ERR, "Process_v1: malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror (errno));
+		LogError("Process_v1: malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror (errno));
 		return 0;
 	}
 
@@ -187,7 +177,7 @@ char ipstr[IP_STRING_LEN];
 	// search the appropriate exporter engine
 	while ( *e ) {
 		if ( (*e)->info.version == version && 
-			 (*e)->info.ip.v6[0] == fs->ip.v6[0] && (*e)->info.ip.v6[1] == fs->ip.v6[1]) 
+			 (*e)->info.ip.V6[0] == fs->ip.V6[0] && (*e)->info.ip.V6[1] == fs->ip.V6[1]) 
 			return *e;
 		e = &((*e)->next);
 	}
@@ -195,7 +185,7 @@ char ipstr[IP_STRING_LEN];
 	// nothing found
 	*e = (exporter_v1_t *)malloc(sizeof(exporter_v1_t));
 	if ( !(*e)) {
-		syslog(LOG_ERR, "Process_v1: malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror (errno));
+		LogError("Process_v1: malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror (errno));
 		return NULL;
 	}
 	memset((void *)(*e), 0, sizeof(exporter_v1_t));
@@ -214,7 +204,7 @@ char ipstr[IP_STRING_LEN];
 	// copy the v1 generic extension map
 	(*e)->extension_map		= (extension_map_t *)malloc(v1_extension_info.map->size);
 	if ( !(*e)->extension_map ) {
-		syslog(LOG_ERR, "Process_v1: malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror (errno));
+		LogError("Process_v1: malloc() error in %s line %d: %s\n", __FILE__, __LINE__, strerror (errno));
 		free(*e);
 		*e = NULL;
 		return NULL;
@@ -233,12 +223,12 @@ char ipstr[IP_STRING_LEN];
 	FlushInfoExporter(fs, &((*e)->info));
 
 	if ( fs->sa_family == AF_INET ) {
-		uint32_t _ip = htonl(fs->ip.v4);
+		uint32_t _ip = htonl(fs->ip.V4);
 		inet_ntop(AF_INET, &_ip, ipstr, sizeof(ipstr));
 	} else if ( fs->sa_family == AF_INET6 ) {
 		uint64_t _ip[2];
-		_ip[0] = htonll(fs->ip.v6[0]);
-		_ip[1] = htonll(fs->ip.v6[1]);
+		_ip[0] = htonll(fs->ip.V6[0]);
+		_ip[1] = htonll(fs->ip.V6[1]);
 		inet_ntop(AF_INET6, &_ip, ipstr, sizeof(ipstr));
 	} else {
 		strncpy(ipstr, "<unknown>", IP_STRING_LEN);
@@ -246,7 +236,7 @@ char ipstr[IP_STRING_LEN];
 
 	dbg_printf("New Exporter: v1 SysID: %u, Extension ID: %i, IP: %s, \n", 
 		(*e)->info.sysid, (*e)->extension_map->map_id, ipstr);
-	syslog(LOG_INFO, "Process_v1: SysID: %u, New exporter: IP: %s\n", (*e)->info.sysid, ipstr);
+	LogError("Process_v1: SysID: %u, New exporter: IP: %s\n", (*e)->info.sysid, ipstr);
 
 	return (*e);
 
@@ -271,7 +261,7 @@ char		*string;
 
 		exporter = GetExporter(fs, v1_header);
 		if ( !exporter ) {
-			syslog(LOG_ERR,"Process_v1: Exporter NULL: Abort v1 record processing");
+			LogError("Process_v1: Exporter NULL: Abort v1 record processing");
 			return;
 		}
 		flags = 0;
@@ -294,14 +284,14 @@ char		*string;
 			// count check
 	  		count	= ntohs(v1_header->count);
 			if ( count > NETFLOW_V1_MAX_RECORDS ) {
-				syslog(LOG_ERR,"Process_v1: Unexpected record count in header: %i. Abort v1 record processing", count);
+				LogError("Process_v1: Unexpected record count in header: %i. Abort v1 record processing", count);
 				fs->nffile->buff_ptr = (void *)common_record;
 				return;
 			}
 
 			// input buffer size check for all expected records
 			if ( size_left < ( NETFLOW_V1_HEADER_LENGTH + count * flow_record_length) ) {
-				syslog(LOG_ERR,"Process_v1: Not enough data to process v1 record. Abort v1 record processing");
+				LogError("Process_v1: Not enough data to process v1 record. Abort v1 record processing");
 				fs->nffile->buff_ptr = (void *)common_record;
 				return;
 			}
@@ -309,7 +299,7 @@ char		*string;
 			// output buffer size check for all expected records
 			if ( !CheckBufferSpace(fs->nffile, count * v1_output_record_size) ) {
 				// fishy! - should never happen. maybe disk full?
-				syslog(LOG_ERR,"Process_v1: output buffer size error. Abort v1 record processing");
+				LogError("Process_v1: output buffer size error. Abort v1 record processing");
 				return;
 			}
 
@@ -374,7 +364,7 @@ char		*string;
 							} break;
 						case EX_ROUTER_IP_v4:	 {	// IPv4 router address
 							tpl_ext_23_t *tpl = (tpl_ext_23_t *)data_ptr;
-							tpl->router_ip = fs->ip.v4;
+							tpl->router_ip = fs->ip.V4;
 							data_ptr = (void *)tpl->data;
 							ClearFlag(common_record->flags, FLAG_IPV6_EXP);
 							} break;
@@ -386,7 +376,7 @@ char		*string;
 
 						default:
 							// this should never happen, as v1 has no other extensions
-							syslog(LOG_ERR,"Process_v1: Unexpected extension %i for v1 record. Skip extension", id);
+							LogError("Process_v1: Unexpected extension %i for v1 record. Skip extension", id);
 					}
 					j++;
 				}
@@ -459,32 +449,9 @@ char		*string;
 				fs->nffile->stat_record->numpackets	+= v1_block->dPkts;
 				fs->nffile->stat_record->numbytes	+= v1_block->dOctets;
 
-				if ( fs->xstat ) {
-					uint32_t bpp = v1_block->dPkts ? v1_block->dOctets/v1_block->dPkts : 0;
-					if ( bpp > MAX_BPP ) 
-						bpp = MAX_BPP;
-					if ( common_record->prot == IPPROTO_TCP ) {
-						fs->xstat->bpp_histogram->tcp.bpp[bpp]++;
-						fs->xstat->bpp_histogram->tcp.count++;
-
-						fs->xstat->port_histogram->src_tcp.port[common_record->srcport]++;
-						fs->xstat->port_histogram->dst_tcp.port[common_record->dstport]++;
-						fs->xstat->port_histogram->src_tcp.count++;
-						fs->xstat->port_histogram->dst_tcp.count++;
-					} else if ( common_record->prot == IPPROTO_UDP ) {
-						fs->xstat->bpp_histogram->udp.bpp[bpp]++;
-						fs->xstat->bpp_histogram->udp.count++;
-
-						fs->xstat->port_histogram->src_udp.port[common_record->srcport]++;
-						fs->xstat->port_histogram->dst_udp.port[common_record->dstport]++;
-						fs->xstat->port_histogram->src_udp.count++;
-						fs->xstat->port_histogram->dst_udp.count++;
-					}
-				}
-
-
 				if ( verbose ) {
 					master_record_t master_record;
+					memset((void *)&master_record, 0, sizeof(master_record_t));
 					ExpandRecord_v2((common_record_t *)common_record, &v1_extension_info, &(exporter->info), &master_record);
 				 	format_file_block_record(&master_record, &string, 0);
 					printf("%s\n", string);
@@ -504,9 +471,9 @@ char		*string;
 				// buffer size sanity check - should never happen, but check it anyway
 				bsize = (pointer_addr_t)common_record - (pointer_addr_t)fs->nffile->block_header - sizeof(data_block_header_t);
 				if ( bsize > BUFFSIZE ) {
-					syslog(LOG_ERR,"### Software error ###: %s line %d", __FILE__, __LINE__);
-					syslog(LOG_ERR,"Process_v1: Output buffer overflow! Flush buffer and skip records.");
-					syslog(LOG_ERR,"Buffer size: size: %u, bsize: %llu > %u", fs->nffile->block_header->size, (unsigned long long)bsize, BUFFSIZE);
+					LogError("### Software error ###: %s line %d", __FILE__, __LINE__);
+					LogError("Process_v1: Output buffer overflow! Flush buffer and skip records.");
+					LogError("Buffer size: size: %u, bsize: %llu > %u", fs->nffile->block_header->size, (unsigned long long)bsize, BUFFSIZE);
 					// reset buffer
 					fs->nffile->block_header->size 		= 0;
 					fs->nffile->block_header->NumRecords = 0;

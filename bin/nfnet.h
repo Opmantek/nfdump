@@ -1,4 +1,5 @@
 /*
+ *  Copyright (c) 2016, Peter Haag
  *  Copyright (c) 2014, Peter Haag
  *  Copyright (c) 2009, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
@@ -28,16 +29,15 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *  $Author: haag $
- *
- *  $Id: nfnet.h 39 2009-11-25 08:11:15Z haag $
- *
- *  $LastChangedRevision: 39 $
- *	
  */
 
 #ifndef _NFNET_H
 #define _NFNET_H 1
+
+#include "config.h"
+
+#include <sys/socket.h>
+
 
 /* Definitions */
 
@@ -56,6 +56,17 @@ typedef struct send_peer_s {
 	void		*buff_ptr;
 	void		*endp;
 } send_peer_t;
+
+typedef struct repeater_s {
+	char	*hostname;
+	char	*port;
+	struct sockaddr_storage addr;
+	int		addrlen;
+	int		family;
+	int		sockfd;
+} repeater_t;
+
+#define MAX_REPEATERS 8
 
 /* Function prototypes */
 

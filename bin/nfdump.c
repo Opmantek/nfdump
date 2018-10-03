@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) 2014, Peter Haag
+ *  Copyright (c) 2018, 2017 Peter Haag
  *  Copyright (c) 2009, Peter Haag
  *  Copyright (c) 2004-2008, SWITCH - Teleinformatikdienste fuer Lehre und Forschung
  *  All rights reserved.
@@ -28,13 +28,6 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *  $Author: haag $
- *
- *  $Id: nfdump.c 69 2010-09-09 07:17:43Z haag $
- *
- *  $LastChangedRevision: 69 $
- *	
- *
  */
 
 #include "config.h"
@@ -63,10 +56,10 @@
 #include "nfx.h"
 #include "nfnet.h"
 #include "bookkeeper.h"
-#include "nfxstat.h"
 #include "collector.h"
 #include "exporter.h"
 #include "nf_common.h"
+#include "output_json.h"
 #include "netflow_v5_v7.h"
 #include "netflow_v9.h"
 #include "rbtree.h"
@@ -232,6 +225,7 @@ printmap_t printmap[] = {
 	{ "biline", 	format_special,      		FORMAT_biline 	},
 	{ "bilong", 	format_special,      		FORMAT_bilong 	},
 	{ "pipe", 		flow_record_to_pipe,      	NULL 			},
+	{ "json", 		flow_record_to_json,      	NULL 			},
 	{ "csv", 		flow_record_to_csv,      	NULL 			},
 	{ "null", 		flow_record_to_null,      	NULL 			},
 #ifdef NSEL
@@ -259,7 +253,7 @@ static void PrintSummary(stat_record_t *stat_record, int plain_numbers, int csv_
 
 static stat_record_t process_data(char *wfile, int element_stat, int flow_stat, int sort_flows,
 	printer_t print_header, printer_t print_record, time_t twin_start, time_t twin_end, 
-	uint64_t limitflows, int tag, int compress, int do_xstat);
+	uint64_t limitflows, int tag, int compress);
 
 /* Functions */
 
@@ -286,11 +280,11 @@ static void usage(char *name) {
 					"-s <expr>[/<order>]\tGenerate statistics for <expr> any valid record element.\n"
 					"\t\tand ordered by <order>: packets, bytes, flows, bps pps and bpp.\n"
 					"-q\t\tQuiet: Do not print the header and bottom stat lines.\n"
-					"-H Add xstat histogram data to flow file.(default 'no')\n"
 					"-i <ident>\tChange Ident to <ident> in file given by -r.\n"
-					"-J <num>\tModify file compression: 0: uncompressed - 1: LZO compressed - 2: BZ2 compressed.\n"
-					"-z\t\tlzo compress flows in output file. Used in combination with -w.\n"
-					"-j\t\tbz2 compress flows in output file. Used in combination with -w.\n"
+					"-J <num>\tModify file compression: 0: uncompressed - 1: LZO - 2: BZ2 - 3: LZ4 compressed.\n"
+					"-z\t\tLZO compress flows in output file. Used in combination with -w.\n"
+					"-y\t\tLZ4 compress flows in output file. Used in combination with -w.\n"
+					"-j\t\tBZ2 compress flows in output file. Used in combination with -w.\n"
 					"-l <expr>\tSet limit on packets for line and packed output format.\n"
 					"\t\tkey: 32 character string or 64 digit hex string starting with 0x.\n"
 					"-L <expr>\tSet limit on bytes for line and packed output format.\n"
@@ -298,7 +292,7 @@ static void usage(char *name) {
 					"-M <expr>\tRead input from multiple directories.\n"
 					"\t\t/dir/dir1:dir2:dir3 Read the same files from '/dir/dir1' '/dir/dir2' and '/dir/dir3'.\n"
 					"\t\trequests either -r filename or -R firstfile:lastfile without pathnames\n"
-					"-m\t\tdepricated\n"
+					"-m\t\tdeprecated\n"
 					"-O <order> Sort order for aggregated flows - tstart, tend, flows, packets bps pps bbp etc.\n"
 					"-R <expr>\tRead input from sequence of files.\n"
 					"\t\t/any/dir  Read all files in that directory.\n"
@@ -310,6 +304,7 @@ static void usage(char *name) {
 					"\t\t long     Standard output line format with additional fields.\n"
 					"\t\t extended Even more information.\n"
 					"\t\t csv      ',' separated, machine parseable output format.\n"
+					"\t\t json     json output format.\n"
 					"\t\t pipe     '|' separated legacy machine parseable output format.\n"
 					"\t\t\tmode may be extended by '6' for full IPv6 listing. e.g.long6, extended6.\n"
 					"-E <file>\tPrint exporter ans sampling info for collected flows.\n"
@@ -354,11 +349,11 @@ char 		bps_str[NUMBER_STRING_SIZE], pps_str[NUMBER_STRING_SIZE], bpp_str[NUMBER_
 			(long long unsigned)stat_record->numpackets, (long long unsigned)bps, 
 			(long long unsigned)pps, (long long unsigned)bpp );
 	} else {
-		format_number(stat_record->numbytes, byte_str, DONT_SCALE_NUMBER, VAR_LENGTH);
-		format_number(stat_record->numpackets, packet_str, DONT_SCALE_NUMBER, VAR_LENGTH);
-		format_number(bps, bps_str, DONT_SCALE_NUMBER, VAR_LENGTH);
-		format_number(pps, pps_str, DONT_SCALE_NUMBER, VAR_LENGTH);
-		format_number(bpp, bpp_str, DONT_SCALE_NUMBER, VAR_LENGTH);
+		format_number(stat_record->numbytes, byte_str, DO_SCALE_NUMBER, VAR_LENGTH);
+		format_number(stat_record->numpackets, packet_str, DO_SCALE_NUMBER, VAR_LENGTH);
+		format_number(bps, bps_str, DO_SCALE_NUMBER, VAR_LENGTH);
+		format_number(pps, pps_str, DO_SCALE_NUMBER, VAR_LENGTH);
+		format_number(bpp, bpp_str, DO_SCALE_NUMBER, VAR_LENGTH);
 		printf("Summary: total flows: %llu, total bytes: %s, total packets: %s, avg bps: %s, avg pps: %s, avg bpp: %s\n",
 		(unsigned long long)stat_record->numflows, byte_str, packet_str, bps_str, pps_str, bpp_str );
 	}
@@ -367,11 +362,10 @@ char 		bps_str[NUMBER_STRING_SIZE], pps_str[NUMBER_STRING_SIZE], bpp_str[NUMBER_
 
 stat_record_t process_data(char *wfile, int element_stat, int flow_stat, int sort_flows,
 	printer_t print_header, printer_t print_record, time_t twin_start, time_t twin_end, 
-	uint64_t limitflows, int tag, int compress, int do_xstat) {
+	uint64_t limitflows, int tag, int compress) {
 common_record_t 	*flow_record, *record_ptr;
 master_record_t		*master_record;
 nffile_t			*nffile_w, *nffile_r;
-xstat_t				*xstat;
 stat_record_t 		stat_record;
 int 				done, write_file;
 
@@ -396,7 +390,6 @@ int	v1_map_done = 0;
 	write_file = !(sort_flows || flow_stat || element_stat) && wfile;
 	nffile_r = NULL;
 	nffile_w = NULL;
-	xstat  	 = NULL;
 
 	// Get the first file handle
 	nffile_r = GetNextFile(NULL, twin_start, twin_end);
@@ -429,16 +422,6 @@ int	v1_map_done = 0;
 				DisposeFile(nffile_r);
 			}
 			return stat_record;
-		}
-		if ( do_xstat ) {
-			xstat = InitXStat(nffile_w);
-			if ( !xstat ) {
-				if ( nffile_r ) {
-					CloseFile(nffile_r);
-					DisposeFile(nffile_r);
-				}
-				return stat_record;
-			}
 		}
 	}
 
@@ -560,7 +543,11 @@ int	v1_map_done = 0;
 							exit(255);
 						}
 					}
-					ConvertCommonV0((void *)record_ptr, (common_record_t *)ConvertBuffer);
+					if ( !ConvertCommonV0((void *)record_ptr, (common_record_t *)ConvertBuffer) ) {
+						LogError("Corrupt data file. Unable to decode at %s line %d\n", __FILE__, __LINE__);
+						exit(255);
+
+					}
 					flow_record = (common_record_t *)ConvertBuffer;
 					dbg_printf("Converted type %u to %u record\n", CommonRecordV0Type, CommonRecordType);
 				case CommonRecordType: {
@@ -606,6 +593,11 @@ int	v1_map_done = 0;
 
 					// Records passed filter -> continue record processing
 					// Update statistics
+					master_record->label = Engine->label;
+#ifdef DEVEL
+					if ( Engine->label )
+						printf("Flow has label: %s\n", Engine->label);
+#endif
 					UpdateStat(&stat_record, master_record);
 
 					// update number of flows matching a given map
@@ -623,8 +615,6 @@ int	v1_map_done = 0;
 					} else {
 						if ( write_file ) {
 							AppendToBuffer(nffile_w, (void *)flow_record, flow_record->size);
-							if ( xstat ) 
-								UpdateXStat(xstat, master_record);
 						} else if ( print_record ) {
 							char *string;
 							// if we need to print out this record
@@ -704,12 +694,6 @@ int	v1_map_done = 0;
 			} 
 		}
 
-		if ( xstat ) {
-			if ( WriteExtraBlock(nffile_w, xstat->block_header ) <= 0 ) {
-				LogError("Failed to write xstat buffer to disk: '%s'" , strerror(errno));
-			} 
-		}
-
 		/* Stat info */
 		if ( write_file ) {
 			/* Copy stat info and close file */
@@ -737,7 +721,7 @@ char		*byte_limit_string, *packet_limit_string, *print_format, *record_header;
 char		*print_order, *query_file, *nameserver, *aggr_fmt;
 int 		c, ffd, ret, element_stat, fdump;
 int 		i, user_format, quiet, flow_stat, topN, aggregate, aggregate_mask, bidir;
-int 		print_stat, syntax_only, date_sorted, do_tag, compress, do_xstat;
+int 		print_stat, syntax_only, date_sorted, do_tag, compress;
 int			plain_numbers, GuessDir, pipe_output, csv_output, ModifyCompress;
 time_t 		t_start, t_end;
 uint32_t	limitflows;
@@ -754,7 +738,6 @@ char 		Ident[IDENTLEN];
 	flow_stat       = 0;
 	print_stat      = 0;
 	element_stat  	= 0;
-	do_xstat 		= 0;
 	limitflows		= 0;
 	date_sorted		= 0;
 	total_bytes		= 0;
@@ -782,7 +765,7 @@ char 		Ident[IDENTLEN];
 
 	Ident[0] = '\0';
 
-	while ((c = getopt(argc, argv, "16aA:Bbc:D:E:s:hHn:i:jf:qzr:v:w:J:K:M:NImO:R:XZt:TVv:x:l:L:o:")) != EOF) {
+	while ((c = getopt(argc, argv, "16aA:Bbc:D:E:s:hn:i:jf:qyzr:v:w:J:K:M:NImO:R:XZt:TVv:x:l:L:o:")) != EOF) {
 		switch (c) {
 			case 'h':
 				usage(argv[0]);
@@ -835,14 +818,21 @@ char 		Ident[IDENTLEN];
 				break;
 			case 'j':
 				if ( compress ) {
-					LogError("Use either -z for LZO or -j for BZ2 compression, but not both\n");
+					LogError("Use one compression: -z for LZO, -j for BZ2 or -y for LZ4 compression\n");
 					exit(255);
 				}
 				compress = BZ2_COMPRESSED;
 				break;
+			case 'y':
+				if ( compress ) {
+					LogError("Use one compression: -z for LZO, -j for BZ2 or -y for LZ4 compression\n");
+					exit(255);
+				}
+				compress = LZ4_COMPRESSED;
+				break;
 			case 'z':
 				if ( compress ) {
-					LogError("Use either -z for LZO or -j for BZ2 compression, but not both\n");
+					LogError("Use one compression: -z for LZO, -j for BZ2 or -y for LZ4 compression\n");
 					exit(255);
 				}
 				compress = LZO_COMPRESSED;
@@ -877,9 +867,6 @@ char 		Ident[IDENTLEN];
 				LogError("*** Anonymisation moved! Use nfanon to anonymise flows!\n");
 				exit(255);
 				break;
-			case 'H':
-				do_xstat = 1;
-				break;
 			case 'L':
 				byte_limit_string = optarg;
 				break;
@@ -901,7 +888,7 @@ char 		Ident[IDENTLEN];
 				print_order = "tstart";
 				Parse_PrintOrder(print_order);
 				date_sorted = 1;
-				LogError("Option -m depricated. Use '-O tstart' instead\n");
+				LogError("Option -m deprecated. Use '-O tstart' instead\n");
 				break;
 			case 'M':
 				Mdirs = optarg;
@@ -948,8 +935,8 @@ char 		Ident[IDENTLEN];
 				break;
 			case 'J':
 				ModifyCompress = atoi(optarg);
-				if ( (ModifyCompress < 0) || (ModifyCompress > 2) ) {
-					LogError("Expected -J <num>, 0: uncompressed, 1: LZO compressed, 2: BZ2 compressed.\n");
+				if ( (ModifyCompress < 0) || (ModifyCompress > 3) ) {
+					LogError("Expected -J <num>, 0: uncompressed, 1: LZO, 2: BZ2, 3: LZ4 compressed.\n");
 					exit(255);
 				}
 				break;
@@ -1013,7 +1000,7 @@ char 		Ident[IDENTLEN];
 	}
 
 	if ( rfile && Rfile ) {
-		LogError("-r and -R are mutually exclusive. Plase specify either -r or -R\n");
+		LogError("-r and -R are mutually exclusive. Please specify either -r or -R\n");
 		exit(255);
 	}
 	if ( Mdirs && !(rfile || Rfile) ) {
@@ -1070,6 +1057,11 @@ char 		Ident[IDENTLEN];
 			print_format = DefaultMode;
 	}
 
+	// limit input chars
+	if ( strlen(print_format) > 512 ) {
+		LogError("Length of ouput format string too big - > 512\n");
+		exit(255);
+	}
 	if ( strncasecmp(print_format, "fmt:", 4) == 0 ) {
 		// special user defined output format
 		char *format = &print_format[4];
@@ -1219,7 +1211,7 @@ char 		Ident[IDENTLEN];
 	nfprof_start(&profile_data);
 	sum_stat = process_data(wfile, element_stat, aggregate || flow_stat, print_order != NULL,
 						print_header, print_record, t_start, t_end, 
-						limitflows, do_tag, compress, do_xstat);
+						limitflows, do_tag, compress);
 	nfprof_end(&profile_data, total_flows);
 
 	if ( total_bytes == 0 ) {

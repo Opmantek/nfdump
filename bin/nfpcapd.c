@@ -1,4 +1,6 @@
 /*
+ *  Copyright (c) 2017, Peter Haag
+ *  Copyright (c) 2016, Peter Haag
  *  Copyright (c) 2014, Peter Haag
  *  Copyright (c) 2013, Peter Haag
  *  All rights reserved.
@@ -27,15 +29,7 @@
  *  ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE 
  *  POSSIBILITY OF SUCH DAMAGE.
  *  
- *  $Author$
- *
- *  $Id$
- *
- *  $LastChangedRevision$
- *  
  */
-
-/* $Id: pcapd.c 2778 2012-03-19 09:23:26Z roethlis $ */
 
 #include "config.h"
 
@@ -62,6 +56,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <string.h>
+#include <assert.h>
 
 #ifdef HAVE_STDINT_H
 #include <stdint.h>
@@ -97,7 +92,6 @@
 #include "flist.h"
 #include "nfstatfile.h"
 #include "bookkeeper.h"
-#include "nfxstat.h"
 #include "collector.h"
 #include "exporter.h"
 #include "rbtree.h"
@@ -146,7 +140,7 @@ int verbose = 0;
 
 static const char *nfdump_version = VERSION;
 
-static int launcher_alive, periodic_trigger, launcher_pid;
+static int launcher_pid;
 static pthread_mutex_t  m_done  = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t terminate = PTHREAD_COND_INITIALIZER;
 static pthread_key_t buffer_key;
@@ -251,13 +245,14 @@ static void usage(char *name) {
 					"-i device\tspecify a device\n"
 					"-r pcapfile\tspecify a file to read from\n"
 					"-B cache buckets\tset the number of cache buckets. (default 1048576)\n"
-					"-s snaplen\tset the snapshot length\n"
+					"-s snaplen\tset the snapshot length - default 1500\n"
 					"-l flowdir \tset the flow output directory. (no default) \n"
-					"-l pcapdir \tset the pcapdir directory. (optional) \n"
+					"-p pcapdir \tset the pcapdir directory. (optional) \n"
 					"-S subdir\tSub directory format. see nfcapd(1) for format\n"
 					"-I Ident\tset the ident string for stat file. (default 'none')\n"
 					"-P pidfile\tset the PID file\n"
 					"-t time frame\tset the time window to rotate pcap/nfcapd file\n"
+					"-j\t\tBZ2 compress flows in output file.\n"
 					"-z\t\tCompress flows in output file.\n"
 					"-E\t\tPrint extended format of netflow data. for debugging purpose only.\n"
 					"-T\t\tInclude extension tags in records.\n"
@@ -618,7 +613,7 @@ int compress			 	 = args->compress;
 FlowSource_t *fs			 = args->fs;
 
 // locals
-time_t t_start, t_clock, t_udp_flush;
+time_t t_start, t_clock;
 int err, done;
 
 	done 	   = 0;
@@ -650,7 +645,6 @@ int err, done;
    		pthread_kill(args->parent, SIGUSR1);
 		pthread_exit((void *)args);
 	}
-	fs->xstat = NULL;
 
 	// init vars
 	fs->bad_packets		= 0;
@@ -659,7 +653,6 @@ int err, done;
 
 	t_start = 0;
 	t_clock = 0;
-	t_udp_flush = 0;
 	while ( 1 ) {
 		struct FlowNode	*Node;
 
@@ -673,7 +666,7 @@ int err, done;
 		}
 
 		if ( t_start == 0 ) {
-			t_udp_flush = t_start = t_clock - (t_clock % t_win);
+			t_start = t_clock - (t_clock % t_win);
 		}
 
 		if (((t_clock - t_start) >= t_win) || done) { /* rotate file */
@@ -769,9 +762,9 @@ int err, done;
 				UpdateBooks(fs->bookkeeper, t_start, 512*fstat.st_blocks);
 			}
 
-			LogInfo("Ident: '%s' Flows: %llu, Packets: %llu, Bytes: %llu, Max Flows: %u", 
+			LogInfo("Ident: '%s' Flows: %llu, Packets: %llu, Bytes: %llu, Max Flows: %u, Fragments: %u", 
 				fs->Ident, (unsigned long long)nffile->stat_record->numflows, (unsigned long long)nffile->stat_record->numpackets, 
-				(unsigned long long)nffile->stat_record->numbytes, NumFlows);
+				(unsigned long long)nffile->stat_record->numbytes, NumFlows, IPFragEntries());
 
 			// reset stats
 			fs->bad_packets = 0;
@@ -794,11 +787,6 @@ int err, done;
    				pthread_kill(args->parent, SIGUSR1);
 				break;
 			}
-		}
-
-		if (((t_clock - t_udp_flush) >= 10) || !done) { /* flush inactive UDP list */
-			UDPexpire(fs, t_clock - 10 );
-			t_udp_flush = t_clock;
 		}
 
 		if ( Node->fin != SIGNAL_NODE )
@@ -1196,7 +1184,7 @@ pcap_dev_t 		*pcap_dev;
 p_packet_thread_args_t *p_packet_thread_args;
 p_flow_thread_args_t *p_flow_thread_args;
 
-	snaplen			= 100;
+	snaplen			= 1500;
 	do_daemonize	= 0;
 	launcher_pid	= 0;
 	device			= NULL;
